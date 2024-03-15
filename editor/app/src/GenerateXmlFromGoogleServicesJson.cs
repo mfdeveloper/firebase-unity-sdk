@@ -96,9 +96,8 @@ namespace Firebase.Editor {
     static GenerateXmlFromGoogleServicesJson() {
         // Delay initialization until the editor is not in play mode.
         EditorInitializer.InitializeOnMainThread(
-            condition: () => {
-                return !EditorApplication.isPlayingOrWillChangePlaymode;
-            }, initializer: () => {
+            condition: () => !EditorApplication.isPlayingOrWillChangePlaymode && AutomaticCheckingSetting.Enabled, 
+            initializer: () => {
                 // We shouldn't be modifying assets on load, so wait for first editor update.
                 CheckConfiguration();
 
@@ -106,8 +105,9 @@ namespace Firebase.Editor {
                 PlayServicesResolver.BundleIdChanged += OnBundleIdChanged;
 
                 return true;
-
-            }, name: "GenerateXmlFromGoogleServicesJson");
+            }, 
+            name: nameof(GenerateXmlFromGoogleServicesJson)
+        );
     }
 
     // Whether the XML-generation side of this component is enabled.
@@ -244,7 +244,8 @@ namespace Firebase.Editor {
     // checking the asset list in the constructor will crash it.  So we do it
     // on an update loop, and then immediately remove ourselves from the update
     // listener.
-    private static void CheckConfiguration() {
+    [MenuItem("Window/Firebase/Check Configuration Now")]
+    public static void CheckConfiguration() {
       UpdateConfigFileDirectory();
 
       if (XMLGenerationEnabled) {
