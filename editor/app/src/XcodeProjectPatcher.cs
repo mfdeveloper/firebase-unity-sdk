@@ -26,6 +26,9 @@ using System.Reflection;
 using UnityEditor;
 using UnityEditor.Callbacks;
 using UnityEngine;
+#if UNITY_IOS
+using UnityEditor.iOS.Xcode;
+#endif
 
 [InitializeOnLoad]
 internal class XcodeProjectPatcher : AssetPostprocessor {
@@ -63,10 +66,14 @@ internal class XcodeProjectPatcher : AssetPostprocessor {
     // Whether this component is enabled.
     private static bool Enabled {
         get {
+            #if UNITY_IOS
             return (EditorUserBuildSettings.activeBuildTarget ==
                     BuildTarget.iOS ||
                     EditorUserBuildSettings.activeBuildTarget ==
                     BuildTarget.tvOS) && Google.IOSResolver.Enabled;
+            #endif
+
+            return false;
         }
     }
 
@@ -79,6 +86,7 @@ internal class XcodeProjectPatcher : AssetPostprocessor {
                         EditorUserBuildSettings.activeBuildTarget == BuildTarget.tvOS) &&
                         !EditorApplication.isPlayingOrWillChangePlaymode;
             }, initializer: () => {
+                #if UNITY_IOS
                 // We attempt to read the config even when the target platform isn't
                 // iOS+ as the project settings are surfaced in the settings window.
                 Google.IOSResolver.RemapXcodeExtension();
@@ -88,7 +96,8 @@ internal class XcodeProjectPatcher : AssetPostprocessor {
                     PlayServicesResolver.BundleIdChanged += OnBundleIdChanged;
                     CheckConfiguration();
                 }
-
+                #endif
+                
                 return true;
             }, name: "XcodeProjectPatcher");
     }
@@ -141,13 +150,14 @@ internal class XcodeProjectPatcher : AssetPostprocessor {
     // Implementation of ReadConfig().
     // NOTE: This is separate from ReadConfig() so it's possible to catch
     // a missing UnityEditor.iOS.Xcode assembly exception.
-    internal static void ReadConfigInternal(bool errorOnNoConfig, string filename = null) {
+    internal static void ReadConfigInternal(bool errorOnNoConfig, string filename = "") {
+        #if UNITY_IOS
         configValues = new Dictionary<string, string>();
-        configFile = filename ?? FindConfig(errorOnNoConfig: errorOnNoConfig);
-        if (configFile == null) {
+        configFile = !string.IsNullOrEmpty(filename) ? filename : FindConfig(errorOnNoConfig: errorOnNoConfig);
+        if (string.IsNullOrEmpty(configFile)) {
             return;
         }
-        var plist = new UnityEditor.iOS.Xcode.PlistDocument();
+        var plist = new PlistDocument();
         plist.ReadFromString(File.ReadAllText(configFile));
         var rootDict = plist.root;
         foreach (var key in PROJECT_KEYS) {
@@ -155,9 +165,10 @@ internal class XcodeProjectPatcher : AssetPostprocessor {
             if (item == null) continue;
             configValues[key] = item.AsString();
             if (Equals(key, "BUNDLE_ID")) {
-              allBundleIds.Add(item.AsString());
+                allBundleIds.Add(item.AsString());
             }
         }
+        #endif
     }
 
     // Get all fields in PROJECT_KEYS previously read from the config file.
@@ -327,7 +338,9 @@ internal class XcodeProjectPatcher : AssetPostprocessor {
     /// </summary>
     [PostProcessBuildAttribute(BUILD_ORDER_ADD_CONFIG)]
     internal static void OnPostProcessAddGoogleServicePlist(
-            BuildTarget buildTarget, string pathToBuiltProject) {
+            BuildTarget buildTarget, 
+            string pathToBuiltProject
+    ) {
         if (!Enabled) return;
         string platform = (buildTarget == BuildTarget.iOS) ? "iOS" : "tvOS";
         Measurement.analytics.Report("ios/xcodepatch",
@@ -340,9 +353,11 @@ internal class XcodeProjectPatcher : AssetPostprocessor {
     // Mono runtime from loading the Xcode API before calling the post
     // processing step.
     internal static void AddGoogleServicePlist(
-            BuildTarget buildTarget, string pathToBuiltProject) {
+        BuildTarget buildTarget, 
+        string pathToBuiltProject
+    ) {
         ReadConfig();
-        if (configFile == null) {
+        if (string.IsNullOrEmpty(configFile)) {
             Measurement.analytics.Report("ios/xcodepatch/config/failed",
                                          "Add Firebase Configuration File Failure");
             return;
@@ -353,24 +368,26 @@ internal class XcodeProjectPatcher : AssetPostprocessor {
         // Copy the config file to the Xcode project folder.
         string configFileBasename = Path.GetFileName(configFile);
         File.Copy(configFile, Path.Combine(pathToBuiltProject,
-                                           configFileBasename), true);
-
+                                            configFileBasename), true);
+        #if UNITY_IOS
         // Add the config file to the Xcode project.
         string pbxprojPath =
             Google.IOSResolver.GetProjectPath(pathToBuiltProject);
-        var project = new UnityEditor.iOS.Xcode.PBXProject();
+        var project = new PBXProject();
         project.ReadFromString(File.ReadAllText(pbxprojPath));
         foreach (var targetGuid in
-                 Google.IOSResolver.GetXcodeTargetGuids(project, includeAllTargets: true)) {
+                    Google.IOSResolver.GetXcodeTargetGuids(project, includeAllTargets: true)) {
             project.AddFileToBuild(
                 targetGuid,
                 project.AddFile(configFileBasename,
                                 configFileBasename,
-                                UnityEditor.iOS.Xcode.PBXSourceTree.Source));
+                                PBXSourceTree.Source));
         }
         File.WriteAllText(pbxprojPath, project.WriteToString());
         Measurement.analytics.Report("ios/xcodepatch/config/success",
-                                     "Add Firebase Configuration File Successful");
+                                        "Add Firebase Configuration File Successful");
+
+        #endif
     }
 
     /// <summary>
@@ -378,7 +395,9 @@ internal class XcodeProjectPatcher : AssetPostprocessor {
     /// </summary>
     [PostProcessBuildAttribute(BUILD_ORDER_PATCH_PROJECT)]
     internal static void OnPostProcessPatchProject(
-            BuildTarget buildTarget, string pathToBuiltProject) {
+        BuildTarget buildTarget, 
+        string pathToBuiltProject
+    ) {
         if (!Enabled) return;
         ReadAndApplyFirebaseConfig(buildTarget, pathToBuiltProject);
         ApplyNsUrlSessionWorkaround(buildTarget, pathToBuiltProject);
@@ -389,7 +408,11 @@ internal class XcodeProjectPatcher : AssetPostprocessor {
     // Mono runtime from loading the Xcode API before calling the post
     // processing step.
     internal static void ReadAndApplyFirebaseConfig(
-            BuildTarget buildTarget, string pathToBuiltProject) {
+        BuildTarget buildTarget, 
+        string pathToBuiltProject
+    ) {
+        
+        #if UNITY_IOS
         // DLLs that trigger post processing by this method.
         // We use the DLL names here as:
         // * Pod dependencies may not be present if frameworks are manually
@@ -440,10 +463,10 @@ internal class XcodeProjectPatcher : AssetPostprocessor {
 
         // Update the Xcode project's Info.plist.
         string plistPath = Path.Combine(pathToBuiltProject, "Info.plist");
-        var plist = new UnityEditor.iOS.Xcode.PlistDocument();
+        var plist = new PlistDocument();
         plist.ReadFromString(File.ReadAllText(plistPath));
         var rootDict = plist.root;
-        UnityEditor.iOS.Xcode.PlistElementArray urlTypes = null;
+        PlistElementArray urlTypes = null;
         if (rootDict.values.ContainsKey("CFBundleURLTypes")) {
             urlTypes = rootDict["CFBundleURLTypes"].AsArray();
         }
@@ -473,18 +496,22 @@ internal class XcodeProjectPatcher : AssetPostprocessor {
         }
         // Finished, Write to File
         File.WriteAllText(plistPath, plist.WriteToString());
+        #endif
     }
 
     // Patch the Xcode project to workaround a bug in NSURLSession in some iOS versions.
     internal static void ApplyNsUrlSessionWorkaround(
-            BuildTarget buildTarget, string pathToBuiltProject) {
+        BuildTarget buildTarget, 
+        string pathToBuiltProject
+    ) {
+        #if UNITY_IOS
         const string WorkaroundNotAppliedMessage =
             "Unable to apply NSURLSession workaround. If " +
             "NSAllowsArbitraryLoads is set to a different value than " +
             "NSAllowsArbitraryLoadsInWebContent in your Info.plist " +
             "network operations will randomly fail on some versions of iOS";
         string plistPath = Path.Combine(pathToBuiltProject, "Info.plist");
-        var plist = new UnityEditor.iOS.Xcode.PlistDocument();
+        var plist = new PlistDocument();
         plist.ReadFromString(File.ReadAllText(plistPath));
         var rootDict = plist.root;
         // Some versions of iOS exhibit buggy behavior when using NSURLSession if
@@ -495,7 +522,7 @@ internal class XcodeProjectPatcher : AssetPostprocessor {
         // uninitialized memory which sporadically blocks encrypted connections opened with
         // NSURLSession.
         if (rootDict.values.ContainsKey("NSAppTransportSecurity")) {
-            UnityEditor.iOS.Xcode.PlistElementDict transportSecurity;
+            PlistElementDict transportSecurity;
             try {
                 transportSecurity = rootDict["NSAppTransportSecurity"].AsDict();
             } catch (InvalidCastException e) {
@@ -504,7 +531,7 @@ internal class XcodeProjectPatcher : AssetPostprocessor {
                     "To fix this issue make sure NSAppTransportSecurity is a dictionary in your " +
                     "Info.plist", e, WorkaroundNotAppliedMessage));
                 Measurement.analytics.Report("ios/xcodepatch/nsurlsessionworkaround/failed",
-                                             "NSURLSession workaround Failed");
+                                                "NSURLSession workaround Failed");
                 return;
             }
             if (transportSecurity.values.ContainsKey("NSAllowsArbitraryLoads") &&
@@ -530,8 +557,7 @@ internal class XcodeProjectPatcher : AssetPostprocessor {
         }
 
         File.WriteAllText(plistPath, plist.WriteToString());
+        #endif
     }
-
 }
-
 }  // namespace Firebase.Editor
