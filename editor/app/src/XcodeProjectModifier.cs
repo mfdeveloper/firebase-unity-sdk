@@ -22,7 +22,9 @@ using System.Reflection;
 using UnityEngine;
 using UnityEditor;
 using UnityEditor.Callbacks;
+#if UNITY_IOS
 using UnityEditor.iOS.Xcode;
+#endif
 
 namespace Firebase.Editor {
 
@@ -51,7 +53,14 @@ internal class XcodeProjectModifier {
   /// loaded without referencing the UnityEditor.iOS.Xcode module.
   /// </remarks>
   internal object ProjectInfo {
-    get { return ((PlistDocument)projectInfoDoc).root; }
+    get
+    {
+      #if UNITY_IOS
+      return ((PlistDocument)projectInfoDoc).root;
+      #else
+      return new object { };
+      #endif
+    }
   }
 
   /// <summary>
@@ -62,14 +71,25 @@ internal class XcodeProjectModifier {
   /// loaded without referencing the UnityEditor.iOS.Xcode module.
   /// </remarks>
   internal object Capabilities {
-    get { return ((PlistDocument)capabilitiesDoc).root; }
+    get
+    {
+      #if UNITY_IOS
+      return ((PlistDocument)capabilitiesDoc).root;
+      #else
+      return new object { };
+      #endif
+    }
   }
 
   private object projectInfoDoc;
   private object capabilitiesDoc;
 
+  #pragma warning disable CS0414 // Field is assigned but its value is never used
+  // PS: [IOS] static fields only for IOS platform
   private static readonly string projectInfoPListFile = "Info.plist";
   private static readonly string capabilitiesPListFile = "Unity-iPhone/dev.entitlements";
+  
+  #pragma warning restore CS0414 // Field is assigned but its value is never used
 
   private static readonly CategoryLogger logger = new CategoryLogger("XcodeProjectModifier");
 
@@ -81,6 +101,8 @@ internal class XcodeProjectModifier {
   /// </summary>
   /// <param name="xcodeProjDir">Xcode project directory</param>
   internal XcodeProjectModifier(string xcodeProjDir) {
+    
+    #if UNITY_IOS
     logger.LogDebug("Loading Xcode project '{0}'.", xcodeProjDir);
     this.xcodeProjDir = xcodeProjDir;
 
@@ -107,12 +129,15 @@ internal class XcodeProjectModifier {
 
     projectInfoDoc = ReadPList(projectInfoPListFile);
     capabilitiesDoc = ReadPList(capabilitiesPListFile);
+    #endif
   }
 
   /// <summary>
   /// Save changes to Xcode project objects to disk.
   /// </summary>
   internal void Save() {
+
+    #if UNITY_IOS
     logger.LogDebug("Saving Xcode project '{0}'.", xcodeProjDir);
 
     var projectPath = PBXProject.GetPBXProjectPath(xcodeProjDir);
@@ -120,6 +145,7 @@ internal class XcodeProjectModifier {
 
     SavePList(projectInfoDoc, projectInfoPListFile);
     SavePList(capabilitiesDoc, capabilitiesPListFile);
+    #endif
   }
 
 
@@ -164,6 +190,8 @@ internal class XcodeProjectModifier {
   /// The scheme to register.
   /// </param>
   internal void AddCustomUrlScheme(string name, string scheme) {
+    
+    #if UNITY_IOS
     PlistElementDict root = (PlistElementDict) ProjectInfo;
     PlistElement elem;
     PlistElementArray types;
@@ -179,11 +207,14 @@ internal class XcodeProjectModifier {
     typeDict.SetString("CFBundleURLName", name);
     PlistElementArray schemes = typeDict.CreateArray("CFBundleURLSchemes");
     schemes.AddString(scheme);
+    #endif
   }
 
   // Helper method to determine if a given URL has been already registered in
   // the CFBundleURLTypes dict
   private static bool ContainsUrlScheme(object inputTypes, string scheme) {
+
+    #if UNITY_IOS
     PlistElementArray types = (PlistElementArray)inputTypes;
     foreach (PlistElement typeElem in types.values) {
       PlistElementDict typeDict = typeElem.AsDict();
@@ -194,6 +225,8 @@ internal class XcodeProjectModifier {
         }
       }
     }
+    
+    #endif
     return false;
   }
 
@@ -234,6 +267,7 @@ internal class XcodeProjectModifier {
 
   // Utility function to read plist file from a path.
   private object ReadPList(string relFilePath) {
+    #if UNITY_IOS
     var plistPath = Path.Combine(xcodeProjDir, relFilePath);
     var doc = new PlistDocument();
 
@@ -242,12 +276,18 @@ internal class XcodeProjectModifier {
     }
 
     return doc;
+    #endif
+
+    return new object { };
   }
 
   // Utility function to save plist file to a path
   private void SavePList(object doc, string relFilePath) {
+  
+    #if UNITY_IOS
     var plistPath = Path.Combine(xcodeProjDir, relFilePath);
     File.WriteAllText(plistPath, ((PlistDocument)doc).WriteToString());
+    #endif
   }
 }
 }
